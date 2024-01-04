@@ -10,8 +10,8 @@ extern crate rocket;
 use crate::{
     config::{ApiKey, SpaceConfig},
     routes::{
-        close_space, get_status_html, get_status_text, get_status_v14, index, keep_open, open_space,
-        options_catch_all, Cors,
+        admin_ui_control, admin_ui_view, close_space, get_status_html, get_status_text, get_status_v14,
+        index, keep_open, open_space, options_catch_all, Cors,
     },
     state::SpaceGuard,
 };
@@ -33,6 +33,8 @@ pub async fn serve(config: SpaceConfig) -> Rocket<Build> {
     space_guard.start_scheduler(config.admin.keep_open_interval).await;
 
     let mut routes = routes![
+        admin_ui_control,
+        admin_ui_view,
         get_status_v14,
         get_status_html,
         get_status_text,

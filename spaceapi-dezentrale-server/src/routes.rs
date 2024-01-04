@@ -4,6 +4,7 @@ use crate::{
 };
 use rocket::{
     fairing::{Fairing, Info, Kind},
+    form::{Form, FromForm, FromFormField},
     http::{
         hyper::header::{
             ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -11,8 +12,8 @@ use rocket::{
         ContentType, Header, Status,
     },
     outcome::Outcome,
-    request::{self, FromRequest, Request},
-    response::Response,
+    request::{self, FlashMessage, FromRequest, Request},
+    response::{Flash, Redirect, Response},
     serde::json::Json,
     State,
 };
@@ -81,6 +82,86 @@ pub async fn keep_open(_api_key: ApiKey, space: &State<SpaceGuard>) -> Json<Keep
     Json(KeepOpenResponse {
         open_till: till.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs(),
     })
+}
+
+#[derive(Debug, FromFormField)]
+pub enum AdminUiControlAction {
+    Open,
+    Close,
+}
+
+impl AdminUiControlAction {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            AdminUiControlAction::Open => "open",
+            AdminUiControlAction::Close => "close",
+        }
+    }
+}
+
+#[derive(Debug, FromForm)]
+pub struct AdminUiControlForm {
+    api_key: String,
+    action: AdminUiControlAction,
+}
+
+#[post("/admin/ui", data = "<data>")]
+pub async fn admin_ui_control(
+    data: Form<AdminUiControlForm>,
+    space: &State<SpaceGuard>,
+    api_key: &State<ApiKey>,
+) -> Flash<Redirect> {
+    if data.api_key == api_key.0 {
+        let hint = match data.action {
+            AdminUiControlAction::Open => {
+                space.open().await;
+                "Space is now open"
+            }
+            AdminUiControlAction::Close => {
+                space.close().await;
+                "Space is now closed"
+            }
+        };
+        Flash::success(Redirect::to(uri!(admin_ui_view())), hint)
+    } else {
+        Flash::error(Redirect::to(uri!(admin_ui_control)), "Invalid API-Key")
+    }
+}
+
+#[get("/admin/ui")]
+pub async fn admin_ui_view(
+    space: &State<SpaceGuard>,
+    flash: Option<FlashMessage<'_>>,
+) -> (ContentType, String) {
+    let hint = flash
+        .map(|msg| format!("<div>{}</div>", msg.message()))
+        .unwrap_or("".to_string());
+    let (command_title, command_value) = if space.is_open().await {
+        ("🔐 Close space", AdminUiControlAction::Close.to_str())
+    } else {
+        ("🔓 Open space", AdminUiControlAction::Open.to_str())
+    };
+    let command_uri = uri!(admin_ui_control);
+
+    let html = format!(
+        r#"<html>
+        <head>
+            <meta charset="utf-8">
+        </head>
+        <body>
+            {hint}
+            <form action="{command_uri}" method="POST">
+                <label for="api_key">API-Key</label>
+                <input type="password" name="api_key"/>
+                <input type="hidden" name="action" value="{command_value}"/>
+                <br>
+                <input type="submit" value="{command_title}" />
+            </form>
+        </body>
+    </html>
+    "#
+    );
+    (ContentType::HTML, html)
 }
 
 /// Minimalistic implementation of the index page
